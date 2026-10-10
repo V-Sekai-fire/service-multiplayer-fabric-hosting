@@ -18,4 +18,4 @@ The API and its web front end build from a `multiplayer-fabric-zone-backend` che
 
 ## Licence
 
-The licence is not stated.
+MIT. See [LICENSE](LICENSE).
