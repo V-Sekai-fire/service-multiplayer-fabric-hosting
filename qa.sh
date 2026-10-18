@@ -13,7 +13,6 @@
 #
 # The local stack exposes:
 #   http://localhost:8888   Caddy HTTP proxy → uro (no TLS, for QA only)
-#   http://localhost:8181   CockroachDB admin UI
 #   udp 7443                WebTransport zone server
 #
 # To test against the live backend instead:
