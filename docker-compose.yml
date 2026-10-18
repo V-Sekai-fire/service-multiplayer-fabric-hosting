@@ -1,43 +1,34 @@
 services:
-  # Generate CockroachDB TLS certificates into a shared volume.
-  # Runs as uid 1000 (cockroach) so that the crdb server can read the 600-permission key files.
-  # Zone-backend runs as root and can read any file regardless of permissions.
-  crdb-certs-init:
-    image: ghcr.io/v-sekai/cockroach:latest
+  # FoundationDB, one process. Uro keeps its SQLite database in it through
+  # datasource-store's weft_fdb VFS. The image writes /var/fdb/fdb.cluster,
+  # which uro reads from the shared volume.
+  fdb:
+    image: foundationdb/foundationdb:7.3.63
     platform: linux/amd64
-    user: "0:0"
+    environment:
+      FDB_NETWORKING_MODE: container
     volumes:
-      - ./certs/crdb:/certs
+      - fdb:/var/fdb
+    healthcheck:
+      test: ["CMD-SHELL", "fdbcli --exec 'status minimal' --timeout 5 | grep -q available"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  # A new FoundationDB has no database until one is configured; a second run is a no-op.
+  fdb-init:
+    image: foundationdb/foundationdb:7.3.63
+    platform: linux/amd64
+    volumes:
+      - fdb:/var/fdb:ro
+    depends_on:
+      fdb:
+        condition: service_started
     entrypoint: >
       /bin/sh -c "
-        set -e
-        [ -f /certs/ca.crt ] && exit 0
-        cockroach cert create-ca --certs-dir=/certs --ca-key=/certs/ca.key --allow-ca-key-reuse --lifetime=2190000h
-        cockroach cert create-node localhost crdb 127.0.0.1 ::1 --certs-dir=/certs --ca-key=/certs/ca.key --lifetime=876000h
-        cockroach cert create-client root --certs-dir=/certs --ca-key=/certs/ca.key --lifetime=876000h
-        chown -R 1000:1000 /certs
+        until [ -f /var/fdb/fdb.cluster ]; do sleep 1; done
+        fdbcli -C /var/fdb/fdb.cluster --exec 'configure new single ssd' --timeout 30 || true
       "
-
-  # CockroachDB single-node (our fork)
-  # Admin UI: http://localhost:8080
-  crdb:
-    image: ghcr.io/v-sekai/cockroach:latest
-    platform: linux/amd64
-    command: start-single-node --certs-dir=/certs --listen-addr=:26257 --http-addr=:8080
-    ports:
-      - "26257:26257"
-      - "8181:8080"   # admin UI — 8080 occupied by rvk-api-service
-    volumes:
-      - crdbdata:/cockroach/cockroach-data
-      - ./certs/crdb:/certs:ro
-    depends_on:
-      crdb-certs-init:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "cockroach", "sql", "--certs-dir=/certs", "-e", "SELECT 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
 
   # S3-compatible gateway backed by local POSIX filesystem (replaces Tigris locally)
   versitygw:
@@ -74,18 +65,21 @@ services:
   # inside uro — the separate desync container has been removed.
   # The baker spawner calls URO_URL=http://uro:4000 from inside Docker.
   uro:
+    # fly/api/Containerfile builds the weftfdb extension and installs the
+    # FoundationDB client. Its entry.sh expects Fly's TLS secrets, so this
+    # stack copies the cluster file in and starts Uro itself.
     build:
       context: ../multiplayer-fabric-zone-backend
-      dockerfile: Dockerfile
-      args:
-        - COMPILE_PHASE=true
+      dockerfile: fly/api/Containerfile
     image: multiplayer-fabric-hosting-uro
+    entrypoint: >
+      /bin/sh -c "
+        cp /var/fdb/fdb.cluster /etc/foundationdb/fdb.cluster &&
+        mix ecto.migrate &&
+        exec mix phx.server
+      "
     environment:
-      COMPILE_PHASE: "false"
-      DATABASE_URL: "postgresql://root@crdb:26257/vsekai?sslmode=verify-full"
-      CRDB_CA_CERT: "/certs/ca.crt"
-      CRDB_CLIENT_CERT: "/certs/client.root.crt"
-      CRDB_CLIENT_KEY: "/certs/client.root.key"
+      URO_DATABASE: "file:uro.v1?vfs=weft_fdb"
       URL: "${URL:-https://hub-700a.chibifire.com/}"
       ROOT_ORIGIN: "${ROOT_ORIGIN:-https://hub-700a.chibifire.com}"
       FRONTEND_URL: "${FRONTEND_URL:-https://hub-700a.chibifire.com/}"
@@ -112,9 +106,11 @@ services:
       MIX_ENV: "prod"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./certs/crdb:/certs:ro
+      - fdb:/var/fdb:ro
     depends_on:
-      crdb:
+      fdb-init:
+        condition: service_completed_successfully
+      fdb:
         condition: service_healthy
       versitygw-init:
         condition: service_completed_successfully
@@ -179,7 +175,7 @@ services:
       - zone-backend
 
 volumes:
-  crdbdata:
+  fdb:
   versitygwdata:
   caddydata:
   caddyconfig:

@@ -9,11 +9,11 @@ This document describes the user-facing features of the V-Sekai hub frontend as 
 | Caddy (TLS termination + reverse proxy) | `caddy:2.9.1-alpine`                          | 443 (HTTPS), 80 (HTTP redirect) |
 | Uro (Phoenix API backend)               | `../multiplayer-fabric-zone-backend`          | internal :4000                  |
 | Next.js frontend                        | `../multiplayer-fabric-zone-backend/frontend` | internal :3000                  |
-| CockroachDB                             | `ghcr.io/v-sekai/cockroach:latest`            | 26257 (TLS cert auth, no password) |
+| FoundationDB (Uro's SQLite pages)       | `foundationdb/foundationdb:7.3.63`            | internal :4500                  |
 | versitygw (S3-compatible storage)       | `ghcr.io/versity/versitygw:latest`            | 7070                            |
 | desync (chunk server)                   | `../multiplayer-fabric-desync`                | 9090                            |
 
-TLS uses a Cloudflare Origin Certificate (`certs/origin.crt` + `certs/origin.key`, valid to 2041). Secrets are in `.env` (gitignored); generate with `./generate-secrets.sh` if missing. CockroachDB uses mutual TLS cert auth — no password; certs are generated into the `crdbcerts` Docker volume on first boot with a 100-year lifetime.
+TLS uses a Cloudflare Origin Certificate (`certs/origin.crt` + `certs/origin.key`, valid to 2041). Secrets are in `.env` (gitignored); generate with `./generate-secrets.sh` if missing. Uro keeps its SQLite database in FoundationDB through datasource-store's weft_fdb VFS; `fdb-init` configures a new database on first boot, and Uro reads the cluster file from the `fdb` volume.
 
 ## URL Map
 
